@@ -1,0 +1,29 @@
+//CEIT-03-502P
+// TIBON, MARK // ADAME, ALTHEA // PAULITE, JASTINE // RUIVIVAR, MARY // DEL MONTE, RAY
+
+const int relayPin = 3;       
+const int waterLevelPin = A0; 
+const int waterThreshold = 100;
+
+void setup() {
+  pinMode(relayPin, OUTPUT);      
+  digitalWrite(relayPin, LOW);   
+  Serial.begin(9600);           
+}
+
+void loop() {
+  int waterLevel = analogRead(waterLevelPin); 
+
+  Serial.print("Water Level: ");  
+  Serial.println(waterLevel);
+
+  if (waterLevel < waterThreshold) { 
+    digitalWrite(relayPin, LOW);   
+    Serial.println("Pump OFF");
+  } else {
+    digitalWrite(relayPin, HIGH);    
+    Serial.println("Pump ON");
+  }
+
+  delay(500);
+}

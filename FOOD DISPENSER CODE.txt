@@ -1,0 +1,286 @@
+//CEIT-03-502P
+// TIBON, MARK // ADAME, ALTHEA // PAULITE, JASTINE // RUIVIVAR, MARY // DEL MONTE, RAY
+
+#include <Servo.h>
+#include "thingProperties.h"
+
+// Pin definitions for ultrasonic sensors
+#define WATER_TRIG_PIN D2
+#define WATER_ECHO_PIN D1
+#define FOOD_TRIG_PIN D5
+#define FOOD_ECHO_PIN D6
+
+// Water and food level definitions
+#define WATER_LEVEL1 2.0        // Level 1: Full (1-2 inches)
+#define WATER_LEVEL2 4.0        // Level 2: Half-Full (2.1-4 inches)
+#define WATER_LEVEL3 6.0        // Level 3: Empty (4.1-6 inches)
+#define FOOD_LEVEL1 2.0         // Level 1: Full (1-2 inches)
+#define FOOD_LEVEL2 4.0         // Level 2: Half-Full (2.1-4 inches)
+#define FOOD_LEVEL3 6.0         // Level 3: Empty (4.1-6 inches)
+#define MAX_VALID_DISTANCE 6.0  // Maximum valid distance (6 inches)
+
+Servo myServo;    // Create a Servo object
+const int servoPin = D7; // Servo signal pin
+
+// Variables to manage servo and scheduling
+bool toggle = true;
+bool initializedServo = false;
+bool lastServoDEGState = false;
+
+int lastFoodLevel = -1;
+int lastWaterLevel = -1;
+
+void setup() {
+  Serial.begin(9600);
+  delay(1500); 
+
+  // Initialize Servo
+  myServo.attach(servoPin);
+  myServo.write(0); 
+  initializedServo = true;
+
+  // Initialize ultrasonic sensor pins
+  pinMode(WATER_TRIG_PIN, OUTPUT);
+  pinMode(WATER_ECHO_PIN, INPUT);
+  pinMode(FOOD_TRIG_PIN, OUTPUT);
+  pinMode(FOOD_ECHO_PIN, INPUT);
+
+  // Initialize IoT Cloud properties
+  initProperties();
+  ArduinoCloud.begin(ArduinoIoTPreferredConnection);
+  setDebugMessageLevel(2);
+  ArduinoCloud.printDebugInfo();
+
+  // Initialize variables
+  counter = 0;
+  light = false;
+  servoDEG = false;
+}
+
+void loop() {
+  ArduinoCloud.update();
+
+  // Scheduled Food Dispensing Logic
+  if (schedule_test.isActive()) {
+    light = true;
+    if (toggle) {
+      dispenseFoodWithMessage();
+    }
+  } else {
+    light = false;
+    toggle = true;
+    messenger = "";
+    Serial.println("Scheduler inactive. Messenger silent.");
+  }
+
+  // Servo Degree Control Logic
+  handleServoDegreeControl();
+
+  // Sensor Monitoring Logic
+  monitorSensors();
+
+  // Time Read
+  if (ArduinoCloud.connected()) {
+    time_read = ArduinoCloud.getLocalTime();
+  }
+}
+
+// Function to dispense food and generate message
+void dispenseFoodWithMessage() {
+  myServo.write(45);
+  delay(1000);
+  myServo.write(0);
+  
+  // Send a random message to the messenger widget
+  messenger = getScheduledFoodDispensingMessage(true);
+  Serial.println("Message sent: " + messenger);
+  
+  counter = ++counter;
+  toggle = false;
+}
+
+// Function to handle servo degree control
+void handleServoDegreeControl() {
+  if (servoDEG != lastServoDEGState) {
+    // State has changed
+    if (servoDEG && initializedServo) {
+      myServo.write(45);
+      delay(500);
+      servoMES = getRandomMessage(true);
+      Serial.println("Servo ON: " + servoMES);
+    } else if (!servoDEG && initializedServo) {
+      myServo.write(0);
+      servoMES = getRandomMessage(false);
+      Serial.println("Servo OFF: " + servoMES);
+    }
+    
+    // Update the last state
+    lastServoDEGState = servoDEG;
+  }
+}
+
+// Function to monitor sensors and update cloud variables
+void monitorSensors() {
+  // Get distance readings for water and food levels
+  float waterDistance = getDistance(WATER_TRIG_PIN, WATER_ECHO_PIN);
+  delay(50); // Small delay to avoid interference
+  float foodDistance = getDistance(FOOD_TRIG_PIN, FOOD_ECHO_PIN);
+
+  // Update cloud variables with the calculated levels
+  updateCloudVariables(waterDistance, foodDistance);
+}
+
+// Function to measure the distance using the ultrasonic sensor
+float getDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 30000); // Timeout after 30ms
+  if (duration == 0) {
+    return MAX_VALID_DISTANCE + 1; // Invalid reading
+  }
+
+  float distanceInCm = duration * 0.034 / 2;  // Convert to cm
+  return distanceInCm / 2.54;  // Convert to inches
+}
+
+// Function to update the Arduino IoT Cloud variables for food and water levels
+void updateCloudVariables(float waterDistance, float foodDistance) {
+  // Calculate the water level as a percentage based on distance
+  int waterPercentage = getWaterLevel(waterDistance);
+  
+  // Calculate the food level as a percentage based on distance
+  int foodPercentage = getFoodLevel(foodDistance);
+
+  // Update the Arduino IoT Cloud with the percentage values
+  waterSEN = waterPercentage;
+  foodSEN = foodPercentage;
+
+  // Check for food and water level messages
+  checkMessages(foodPercentage, waterPercentage);
+}
+
+// Function to calculate water level as a percentage based on distance
+int getWaterLevel(float distance) {
+  if (distance > MAX_VALID_DISTANCE) return -1; // Invalid reading
+  
+  if (distance <= WATER_LEVEL1) return 100;  // Full (100%)
+  if (distance <= WATER_LEVEL2) return 50;   // Half-Full (50%)
+  return 0;  // Empty (0%)
+}
+
+// Function to calculate food level as a percentage based on distance
+int getFoodLevel(float distance) {
+  if (distance > MAX_VALID_DISTANCE) return -1; // Invalid reading
+  
+  if (distance <= FOOD_LEVEL1) return 100;  // Full (100%)
+  if (distance <= FOOD_LEVEL2) return 50;   // Half-Full (50%)
+  return 0;  // Empty (0%)
+}
+
+// Function to check and trigger alert messages for food and water levels
+void checkMessages(int foodLevel, int waterLevel) {
+  if (foodLevel != lastFoodLevel && foodLevel != -1) {
+    lastFoodLevel = foodLevel;  // Update last level
+    if (foodLevel == 50) {
+      foodMES = getRandomFoodMessage(50);
+    } else if (foodLevel == 0) {
+      foodMES = getRandomFoodMessage(0);
+    }
+  }
+
+  if (waterLevel != lastWaterLevel && waterLevel != -1) {
+    lastWaterLevel = waterLevel;  // Update last level
+    if (waterLevel == 50) {
+      waterMES = getRandomWaterMessage(50);
+    } else if (waterLevel == 0) {
+      waterMES = getRandomWaterMessage(0);
+    }
+  }
+}
+
+
+// Existing message generation functions remain the same
+String getScheduledFoodDispensingMessage(bool isActive) {
+  if (!isActive) return "";
+  
+  int randomMessage = random(1, 4);
+  switch (randomMessage) {
+    case 1: return "Meow! 🎉 It's chow time!";
+    case 2: return "Hooray! 🐱 It's mealtime!";
+    case 3: return "Hey there, it's chow time!";
+  }
+  return "No message available.";
+}
+
+String getRandomMessage(bool isOn) {
+  int randomMessage = random(1, 4);
+  
+  if (isOn) {
+    switch (randomMessage) {
+      case 1: return "Purrfect! 🐱 Food dispenser is ON!";
+      case 2: return "Yay! 🐾 Time to munch!";
+      case 3: return "Hello furry friend! Enjoy your snack!";
+    }
+  } else {
+    switch (randomMessage) {
+      case 1: return "No food today. The dispenser's OFF.";
+      case 2: return "Uh-oh! Dispenser paused.";
+      case 3: return "No snacks for now. Stay tuned!";
+    }
+  }
+  return "Unknown state.";
+}
+
+// Function to return random food messages
+String getRandomFoodMessage(int level) {
+  if (level == 50) {
+    String messages[] = {
+      "Your food supply is halfway down. 🍽️ Refill soon!",
+      "Halfway there! 🍽️ Consider refilling your pet's food bowl soon! 🐾",
+      "The food supply is running low. 🍖 Keep your furry friend happy with a refill!"
+    };
+    return messages[random(0, 3)];
+  } else if (level == 0) {
+    String messages[] = {
+      "Food's empty! 😱 Time to refill! 🍖",
+      "Oh no! The food bowl is empty! 😱 Time to refill it for your pet's next meal! 🍴",
+      "Empty bowl alert! 🐾 Let's refill and keep your pet well-fed! 🍽️"
+    };
+    return messages[random(0, 3)];
+  }
+  return "";
+}
+
+// Function to return random water messages
+String getRandomWaterMessage(int level) {
+  if (level == 50) {
+    String messages[] = {
+      "Water levels are halfway down. 💧 Refill soon!",
+      "Water's halfway down! 💧 Keep your pet hydrated—refill soon!",
+      "The water level is dropping. 💦 Don't forget to top it up soon for your furry friend!"
+    };
+    return messages[random(0, 3)];
+  } else if (level == 0) {
+    String messages[] = {
+      "Water's empty! 😟 Refill the bowl! 💧",
+      "No water left! 😟 Refill the bowl ASAP to quench your pet's thirst! 💧",
+      "Uh-oh! Water's all gone. 💦 Time to refill and keep your pet hydrated!"
+    };
+    return messages[random(0, 3)];
+  }
+  return "";
+}
+
+// Callback functions for IoT Cloud variables
+void onScheduleTestChange() {}
+void onMessengerChange() {}
+void onServoDEGChange() {}
+void onServoMESChange() {}
+void onFoodMESChange() {}
+void onFoodSENChange() {}
+void onWaterMESChange() {}
+void onWaterSENChange() {}
