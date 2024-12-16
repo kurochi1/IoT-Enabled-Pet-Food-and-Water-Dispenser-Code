@@ -1,5 +1,5 @@
 //CEIT-03-502P
-// TIBON, MARK // ADAME, ALTHEA // PAULITE, JASTINE // RUIVIVAR, MARY // DEL MONTE, RAY
+// ADAME, ALTHEA // TIBON, MARK // PAULITE, JASTINE // RUIVIVAR, MARY // DEL MONTE, RAY
 
 #include <Servo.h>
 #include "thingProperties.h"
